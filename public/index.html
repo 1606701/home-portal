@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#FAF6EF" />
+<meta name="description" content="局域网控制台：常用应用入口与系统状态" />
+<title>控制台</title>
+<link rel="icon" href="favicon.svg" />
+<link rel="stylesheet" href="style.css?v=2" />
+</head>
+<body>
+
+<!-- 取不到状态时的窄条：页面照常用，只是提示一下 -->
+<div id="offline" class="offline" role="status" hidden>
+  <span class="offline-dot" aria-hidden="true"></span>暂时取不到状态，重试中
+</div>
+
+<header class="hero">
+  <h1 id="title">控制台</h1>
+  <p class="hero-meta">
+    <span id="hostname">—</span>
+    <span class="sep" aria-hidden="true">·</span>
+    <span id="uptime">—</span>
+  </p>
+</header>
+
+<main>
+  <!-- 应用入口：视觉主体，整张卡片可点 -->
+  <section class="block" aria-label="应用">
+    <div id="apps" class="apps"></div>
+    <p id="apps-empty" class="empty" hidden>还没有配置应用，改 config.json 就能加</p>
+  </section>
+
+  <h2 class="sec-title">系统状态</h2>
+
+  <section class="block" aria-label="系统状态">
+    <div class="meters">
+
+      <article class="card meter" data-key="mem">
+        <div class="meter-top">
+          <span class="meter-name">内存</span>
+          <span class="meter-val"><b id="mem-pct">—</b></span>
+        </div>
+        <div class="bar"><i id="mem-bar" style="width:0%"></i></div>
+        <p class="meter-foot" id="mem-foot">—</p>
+      </article>
+
+      <article class="card meter" data-key="disk">
+        <div class="meter-top">
+          <span class="meter-name">存储</span>
+          <span class="meter-val"><b id="disk-pct">—</b></span>
+        </div>
+        <div class="bar"><i id="disk-bar" style="width:0%"></i></div>
+        <p class="meter-foot" id="disk-foot">—</p>
+        <p class="meter-foot" id="disk-io">读 — · 写 —</p>
+      </article>
+
+      <article class="card meter" data-key="cpu">
+        <div class="meter-top">
+          <span class="meter-name">CPU</span>
+          <span class="meter-val"><b id="cpu-pct">—</b></span>
+        </div>
+        <div class="bar"><i id="cpu-bar" style="width:0%"></i></div>
+        <p class="meter-foot" id="cpu-foot">—</p>
+        <!-- 每核占用，由 app.js 按核数生成 -->
+        <div id="cpu-cores" class="cores"></div>
+      </article>
+
+      <article class="card meter" data-key="net">
+        <div class="meter-top">
+          <span class="meter-name">网络</span>
+          <span class="meter-val"><b id="net-state">—</b></span>
+        </div>
+        <div class="net-lines">
+          <span class="net-line"><span class="net-k">网卡</span><span id="net-iface">—</span></span>
+          <span class="net-line"><span class="net-k">地址</span><span id="net-ip">—</span></span>
+          <span class="net-line"><span class="net-k">下行</span><span id="net-rx">—</span></span>
+          <span class="net-line"><span class="net-k">上行</span><span id="net-tx">—</span></span>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <h2 class="sec-title">运行状况</h2>
+
+  <section class="block" aria-label="运行状况">
+    <div class="meters">
+
+      <!-- NPU：没检测到时整张卡只留一句「未检测到 NPU」 -->
+      <article class="card meter" data-key="npu">
+        <div class="meter-top">
+          <span class="meter-name">NPU 加速器</span>
+          <span class="meter-val"><b id="npu-chip">—</b></span>
+        </div>
+        <div id="npu-body" class="npu-body">
+          <div class="kv-row">
+            <span class="kv-name">AICore</span>
+            <span class="minibar"><i id="npu-aicore-bar" style="width:0%"></i></span>
+            <span class="kv-val" id="npu-aicore">—</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-name">显存</span>
+            <span class="minibar"><i id="npu-mem-bar" style="width:0%"></i></span>
+            <span class="kv-val" id="npu-mem">—</span>
+          </div>
+          <p class="npu-note" id="npu-note">—</p>
+        </div>
+        <p class="meter-foot" id="npu-none" hidden>未检测到 NPU</p>
+      </article>
+
+      <!-- 服务健康三态：绿「全部正常」/ 灰「无法检查」/ 黄红「N 个 + 可展开」 -->
+      <article class="card meter" data-key="health">
+        <div class="meter-top">
+          <span class="meter-name">服务健康</span>
+          <span class="meter-val"><b id="health-count">—</b></span>
+        </div>
+        <p class="meter-foot" id="health-ok" hidden>—</p>
+        <details id="health-details" class="fails" hidden>
+          <summary id="health-summary">失败的服务</summary>
+          <ul id="health-list" class="fail-list"></ul>
+        </details>
+      </article>
+
+      <!-- 进程 TOP 3 -->
+      <article class="card meter" data-key="top">
+        <div class="meter-top">
+          <span class="meter-name">内存占用 TOP</span>
+        </div>
+        <ol id="top-list" class="toplist"></ol>
+        <p class="meter-foot" id="top-none" hidden>—</p>
+      </article>
+
+      <!-- 备份：超过 30 小时变黄，说明定时任务可能断了 -->
+      <article class="card meter" data-key="backup">
+        <div class="meter-top">
+          <span class="meter-name" id="backup-label">备份</span>
+          <span class="meter-val"><b id="backup-age">—</b></span>
+        </div>
+        <p class="meter-foot" id="backup-at">—</p>
+      </article>
+
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span id="foot-distro">—</span>
+  <span class="sep" aria-hidden="true">·</span>
+  <span id="foot-kernel">—</span>
+</footer>
+
+<script src="app.js?v=2"></script>
+</body>
+</html>

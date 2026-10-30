@@ -1,0 +1,19 @@
+[Unit]
+Description=Home Portal (LAN dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=HwHiAiUser
+WorkingDirectory=/home/HwHiAiUser/Yangfan_WorkSpace/portal
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+# 监听 80 端口但不是 root：只授这一项能力
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

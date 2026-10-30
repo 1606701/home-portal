@@ -1,0 +1,547 @@
+/* 局域网门户 · 暖木陶土配色（与 HomeBox 同一套，浅色主题）
+   移动优先：先按手机窄屏排版，屏幕变宽再拆成两列。 */
+
+:root {
+  --accent: #B4633A;
+  --accent-soft: #F3E5DC;
+  --bg: #FAF6EF;
+  --card: #FFFDF9;
+  --ink: #2E2823;
+  --ink-soft: #6B5F55;
+  --ink-faint: #9A8E83;
+  --line: #E9E1D5;
+  --line-soft: #F1EAE0;
+  --track: #EDE6DA;
+  --ok: #5F8A5F;
+  --warn: #C98A2E;
+  --bad: #B03A3A;
+  --down: #B9AFA3;
+  --shadow: 0 1px 2px rgba(77, 58, 40, 0.04), 0 6px 18px rgba(77, 58, 40, 0.06);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  /* 留出 iPhone 底部横条的位置 */
+  padding: 0 0 env(safe-area-inset-bottom);
+}
+
+/* 顶部离线提示：不占页面流，浮在最上面 */
+.offline {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 12px;
+  background: #F6E7C9;
+  color: #7A5715;
+  font-size: 13px;
+  border-bottom: 1px solid #E7D3A8;
+}
+
+.offline[hidden] { display: none; }
+
+.offline-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex-shrink: 0;
+}
+
+/* ---------- 顶部 ---------- */
+
+.hero {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 22px 18px 14px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+}
+
+.hero-meta {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ink-faint);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.sep { color: var(--line); }
+
+main {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 18px 8px;
+}
+
+.block { margin-bottom: 20px; }
+
+.sec-title {
+  margin: 26px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  letter-spacing: 0.4px;
+}
+
+.empty {
+  margin: 0;
+  padding: 18px;
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 13px;
+  background: var(--card);
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+}
+
+.empty[hidden] { display: none; }
+
+/* ---------- 应用卡片 ---------- */
+
+.apps {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.app {
+  position: relative;
+  display: block;
+  padding: 15px 46px 15px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  color: inherit;
+  /* 左侧一道应用自己的颜色，一眼区分两块 */
+  border-left: 4px solid var(--app-accent, var(--accent));
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.app:active {
+  transform: scale(0.995);
+  box-shadow: 0 1px 2px rgba(77, 58, 40, 0.06);
+}
+
+.app:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.app-name {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: #F0EEE9;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--down);
+}
+
+.badge.is-up {
+  background: #E8F0E6;
+  color: #3F6B3F;
+}
+
+.badge.is-up::before { background: var(--ok); }
+
+.badge.is-down {
+  background: #F7E9E6;
+  color: #8C4238;
+}
+
+.badge.is-down::before { background: var(--bad); }
+
+.app-desc {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.app-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.app-port {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  /* 先给不支持 color-mix 的老浏览器一个稳妥底色，再用卡片自己的颜色染一层 */
+  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--app-accent, var(--accent)) 14%, #FFFDF9);
+  color: var(--accent);
+  color: var(--app-accent, var(--accent));
+}
+
+.app-lat { font-variant-numeric: tabular-nums; }
+
+/* 右侧箭头：纯内联 SVG，不引图标库 */
+.app-go {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  color: var(--ink-faint);
+  opacity: 0.75;
+}
+
+.app:hover .app-go { color: var(--app-accent, var(--accent)); opacity: 1; }
+
+/* ---------- 状态卡 ---------- */
+
+.meters {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  /* 每张卡按自己的内容撑高，别被同行最高的那张拉成一片空白 */
+  align-items: start;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 14px 15px;
+}
+
+.meter-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.meter-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.meter-val b {
+  font-size: 17px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+}
+
+.bar {
+  height: 8px;
+  margin: 9px 0 8px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--ok);
+  transition: width 0.45s ease, background-color 0.3s ease;
+}
+
+/* 用量分级：>70% 黄，>85% 红 */
+.meter.is-warn .bar > i { background: var(--warn); }
+.meter.is-bad .bar > i { background: var(--bad); }
+.meter.is-warn .meter-val b { color: var(--warn); }
+.meter.is-bad .meter-val b { color: var(--bad); }
+
+.meter-foot {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 网络卡：四行键值 */
+.net-lines {
+  margin-top: 8px;
+  display: grid;
+  gap: 5px;
+}
+
+.net-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-k { color: var(--ink-faint); }
+
+#net-state {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---------- 页脚 ---------- */
+
+.foot {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 14px 18px 26px;
+  font-size: 12px;
+  color: var(--ink-faint);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* ---------- 应用卡片里第二行小字（内存 / 运行时长） ---------- */
+
+.app-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 每核 CPU ---------- */
+
+.cores {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.cores:empty { display: none; }
+
+.core-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.core-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.core-bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--ok);
+  transition: width 0.45s ease, background-color 0.3s ease;
+}
+
+.core-row.is-warn .core-bar > i { background: var(--warn); }
+.core-row.is-bad .core-bar > i { background: var(--bad); }
+
+.core-val { text-align: right; }
+
+/* ---------- NPU ---------- */
+
+.npu-body { margin-top: 4px; }
+
+.npu-body[hidden] { display: none; }
+
+.kv-row {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.kv-name { color: var(--ink-faint); font-size: 11.5px; }
+
+.kv-val { text-align: right; white-space: nowrap; }
+
+.minibar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.minibar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.45s ease;
+}
+
+/* 健康状态：刻意用灰色小字，不做成红灯（见 README） */
+.npu-note {
+  margin: 9px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-faint);
+}
+
+/* ---------- 服务健康 ---------- */
+
+/* 服务健康三态：绿=确实 0 个失败、灰=查不了、黄/红=有失败。
+   「无法检查」刻意用 --ink-faint 的灰，和 --ok 的绿拉开距离 —— 查不了不代表没问题。 */
+.meter-foot.is-ok { color: var(--ok); }
+.meter-foot.is-unknown { color: var(--ink-faint); }
+
+.fails {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.fails[hidden] { display: none; }
+
+.fails summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 12px;
+  list-style: none;
+  padding: 2px 0;
+}
+
+.fails summary::-webkit-details-marker { display: none; }
+
+.fails summary::before {
+  content: "▸ ";
+  color: var(--ink-faint);
+}
+
+.fails[open] summary::before { content: "▾ "; }
+
+.fail-list {
+  margin: 6px 0 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+}
+
+.fail-list li {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 进程 TOP ---------- */
+
+.toplist {
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: rank;
+  display: grid;
+  gap: 5px;
+}
+
+.toplist li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  counter-increment: rank;
+}
+
+.toplist li::before {
+  content: counter(rank);
+  color: var(--ink-faint);
+  font-size: 11px;
+  min-width: 12px;
+}
+
+.tp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-size { white-space: nowrap; }
+
+/* ---------- 宽屏 ---------- */
+
+@media (min-width: 560px) {
+  .apps { grid-template-columns: 1fr 1fr; }
+  .meters { grid-template-columns: 1fr 1fr; }
+  .hero { padding-top: 30px; }
+  .hero h1 { font-size: 25px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app, .bar > i, .core-bar > i, .minibar > i { transition: none; }
+}
