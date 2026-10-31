@@ -255,6 +255,8 @@ bash deploy/set-token.sh --show    # 查看当前口令
 4. **sudoers 只放行两条命令**（homebox / photo-frame 的 restart），不给 `NOPASSWD: ALL`。
    门户重启自己走「进程退出 + Restart=always」，根本不需要 sudo。
    门户是个没有登录的局域网页面，靠一个口令守着升级入口，真出事也只波及这三个服务。
+   为了让这两条规则真正生效，`portal.service` 不能设 `NoNewPrivileges` 和
+   `CapabilityBoundingSet`——原因见下文「为什么 portal.service 里没有 NoNewPrivileges」。
 
 ### 免密规则为什么写在 /etc/sudoers 末尾，而不是 /etc/sudoers.d/
 
@@ -286,7 +288,7 @@ sudo -n /usr/bin/systemctl restart homebox.service && echo 免密可用
 
 ### 门户怎么重启自己
 
-这里连着踩了三个坑，最后落到最朴素的办法上：
+这里连着踩了四个坑，最后落到最朴素的办法上：
 
 1. **`systemd-run` + 带参 sudo 规则**：失败。sudoers 的带参规则必须逐字匹配，
    带 `=` 的参数（`--on-active=3`）实测匹配不上，报的还是 `a password is required`，极难定位；
@@ -294,15 +296,38 @@ sudo -n /usr/bin/systemctl restart homebox.service && echo 免密可用
    （`Failed to start transient timer unit: Unit xxx.service already exists`）。
 2. **无参数调用一个系统级脚本**：SSH 里手测 `sudo -n /usr/local/bin/portal-self-restart` 成功，
    但从门户进程里调一律失败。
-3. 真正的原因是 `portal.service` 里的 **`NoNewPrivileges=true`**——它禁止 sudo 提权。
-   这条是安全加固，不该为了重启去拆掉，而且它只影响进程内的 sudo，SSH 里手测完全看不出来。
-
-最终方案不需要任何权限：**门户升级完自己后直接让进程退出，由 `Restart=always` 拉起新代码**。
-配合 `portal.service` 里的 `StartLimitIntervalSec=0`（关掉启动频率限制），连续升级也不会被锁住。
+3. 原因查到了：`portal.service` 里的 **`NoNewPrivileges=true`** 禁止 sudo 提权。
+4. 最终不需要任何权限：**门户升级完自己后直接让进程退出，由 `Restart=always` 拉起新代码**。
+   配合 `StartLimitIntervalSec=0`（关掉启动频率限制），连续升级也不会被 systemd 锁住。
 
 代价是：如果某次拉下来的代码本身起不来，它会每 3 秒重启一次、一直循环，页面打不开。
 所以升级前先看「待升级的提交」是什么，别把没验证过的代码推上去。
 真要救回来，SSH 上去 `git reset --hard HEAD~1` 就行。
+
+### 为什么 portal.service 里没有 NoNewPrivileges
+
+同一块石头绊了两次，所以单独写一节。
+
+门户要重启 homebox / photo-frame，用的是 `sudo -n /usr/bin/systemctl restart <unit>`。
+这条路要求 `portal.service` 里**同时满足**两条，缺一不可：
+
+| 配置项 | 设成限制值会怎样 |
+| --- | --- |
+| `NoNewPrivileges=true` | sudo 直接拒绝：`The "no new privileges" flag is set, which prevents sudo from running as root` |
+| `CapabilityBoundingSet=CAP_NET_BIND_SERVICE` | sudo 拿不到 `CAP_SETUID`/`CAP_SETGID`，切 root 时失败 |
+
+这两项都是妥妥的安全加固，但都会让「一键升级」永久失败。**最坑的地方是：
+从 SSH 里手测 `sudo -n ... restart homebox` 返回 0，一切正常；只有从门户进程里调才失败。**
+因为这个差异，我先后两次把「SSH 手测通过」当成验证完成，实际都是假的。
+判断这类问题不要看命令返回码，要看 `/proc/<MainPID>/status` 里的 `NoNewPrivs` 和 `CapEff`。
+
+现在 `portal.service` 里是 `NoNewPrivileges=false`，也没有 `CapabilityBoundingSet`。
+安全性靠 `/etc/sudoers` 末尾那两条 NOPASSWD 规则兜底——门户能做的仍然只有
+「重启 homebox」「重启 photo-frame」这两件事，没有 `NOPASSWD: ALL`。
+
+如果哪天想更严格，可行的方向是按 unit 细化的 polkit 规则；
+但这块板子装的是 polkit **0.105**，只支持 `.pkla`，而 `.pkla` 无法限定到具体 unit，
+那样等于把这台机器上所有服务的启停权都交出去，比现在更宽，所以没有采用。
 
 ### 升级出问题怎么查
 
