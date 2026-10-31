@@ -250,9 +250,9 @@ bash deploy/set-token.sh --show    # 查看当前口令
 2. **工作区有未提交改动就拒绝**，本地有未推送提交也拒绝：不覆盖你手改的东西。
 3. **HomeBox 的 `data/` 不在版本库里**（`.gitignore` 里有 `data/`，`git ls-files data/` 为空），
    所以 ff 合并碰不到物品数据和照片。升级前后拿四个计数一比对就能确认。
-4. **sudoers 只放行三条命令**（两个服务的 restart + 用 `systemd-run` 重启门户自己），
-   不给 `NOPASSWD: ALL`。门户是个没有登录的局域网页面，靠一个口令守着升级入口，
-   真出事也只波及这三个服务。
+4. **sudoers 只放行三条命令**（两个服务的 restart + 一个无参数的
+   `/usr/local/bin/portal-self-restart`），不给 `NOPASSWD: ALL`。
+   门户是个没有登录的局域网页面，靠一个口令守着升级入口，真出事也只波及这三个服务。
 
 ### 免密规则为什么写在 /etc/sudoers 末尾，而不是 /etc/sudoers.d/
 
@@ -281,6 +281,18 @@ sudo: a password is required
 ```bash
 sudo -n /usr/bin/systemctl restart homebox.service && echo 免密可用
 ```
+
+### 门户怎么重启自己
+
+`systemctl restart portal.service` 不能再由门户自己直接调（它会随着 cgroup 一起被杀），
+也不要用带参数的 sudo 规则——**sudoers 的带参规则必须逐字匹配，带 `=` 的参数
+（`--on-active=3`）实测根本匹配不上**，报的错还是那句 `a password is required`，
+极难定位。中间还试过 `systemd-run --unit portal-self-restart`，又遇到临时单元名残留
+（`Failed to start transient timer unit: Unit xxx.service already exists`）。
+
+最终方案最简单：`sudo -n /usr/local/bin/portal-self-restart`，规则里**一个参数都不带**。
+这个脚本干两件事：等 2 秒（让 HTTP 响应先发回浏览器），然后 `systemctl restart portal.service`。
+调用它的进程确实会被一起杀掉，但重启请求已经交给 systemd 了，重启照常进行。
 
 ### 升级出问题怎么查
 

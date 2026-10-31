@@ -1527,16 +1527,18 @@ function tokenMatches(given) {
 }
 
 /**
- * 重启某个 unit。门户自己不能直接重启自己（会被自己的 cgroup 杀掉），
- * 所以交给 systemd-run 起一个独立的一次性单元，延迟 3 秒执行。
+ * 重启某个 unit。
+ * 门户自己是特殊处理：调用 /usr/local/bin/portal-self-restart，
+ * 它 sleep 2 秒后执行 systemctl restart portal.service —— 先让 HTTP 响应发出去再重启。
  * @param {string} unit unit 名
  * @returns {Promise<{ok:boolean, output:string}>} 结果
  */
 async function restartUnit(unit) {
   if (unit === 'portal.service') {
-    const res = await run('sudo', ['-n', '/usr/bin/systemd-run',
-      '--on-active=3', '--unit=portal-self-restart', '--collect',
-      '/usr/bin/systemctl', 'restart', unit], 8000);
+    // 无参数调用一个系统级脚本来重启自己。为什么不用 systemd-run：
+    // sudoers 的带参规则必须逐字匹配，带 = 的参数实测匹配不上；
+    // 临时单元名还会残留冲突（Unit xxx.service already exists）。
+    const res = await run('sudo', ['-n', '/usr/local/bin/portal-self-restart'], 8000);
     return { ok: res.ok, output: lastLine(res.stderr) || res.error || '' };
   }
   const res = await run('sudo', ['-n', '/usr/bin/systemctl', 'restart', unit], 25000);
