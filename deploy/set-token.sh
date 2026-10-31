@@ -45,13 +45,7 @@ else
 fi
 echo "  口令：$(cat "$TOKEN_FILE")"
 
-echo "===== 2. 安装自重启助手 ====="
-# 门户重启自己要走「无参数 sudo 调用一个系统级脚本」这条路，
-# 原因见 deploy/portal-upgrade.sudoers 里的注释。
-SUDO install -m 755 -o root -g root "$DIR/deploy/portal-self-restart.sh" /usr/local/bin/portal-self-restart
-echo "  已安装 /usr/local/bin/portal-self-restart"
-
-echo "===== 3. 安装免密规则到 $SUDOERS 末尾 ====="
+echo "===== 2. 安装免密规则到 $SUDOERS 末尾 ====="
 STAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP="/etc/sudoers.bak-$STAMP"
 SUDO cp -a "$SUDOERS" "$BACKUP"
@@ -72,7 +66,7 @@ if [ -f /etc/sudoers.d/portal-upgrade ]; then
   echo "  已移除无效的 /etc/sudoers.d/portal-upgrade"
 fi
 
-echo "===== 4. 校验语法 ====="
+echo "===== 3. 校验语法 ====="
 if SUDO visudo -c >/dev/null 2>&1; then
   echo "  语法 OK"
 else
@@ -82,7 +76,7 @@ else
   exit 1
 fi
 
-echo "===== 5. 确认规则排在文件末尾（这决定它是否生效）====="
+echo "===== 4. 确认规则排在文件末尾（这决定它是否生效）====="
 SUDO grep -n "NOPASSWD\|ALL=(ALL) ALL" "$SUDOERS" | tail -4 | sed 's/^/    /'
 
 echo

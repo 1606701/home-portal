@@ -248,10 +248,12 @@ bash deploy/set-token.sh --show    # 查看当前口令
 
 1. **只做 `merge --ff-only`**，不做 rebase / reset：升级不改写历史，也不丢提交。
 2. **工作区有未提交改动就拒绝**，本地有未推送提交也拒绝：不覆盖你手改的东西。
+   判定只看**已跟踪文件**（`git status --porcelain --untracked-files=no`）——
+   未跟踪的临时文件不会被 ff 合并覆盖，不该因为它把升级永久锁死。
 3. **HomeBox 的 `data/` 不在版本库里**（`.gitignore` 里有 `data/`，`git ls-files data/` 为空），
    所以 ff 合并碰不到物品数据和照片。升级前后拿四个计数一比对就能确认。
-4. **sudoers 只放行三条命令**（两个服务的 restart + 一个无参数的
-   `/usr/local/bin/portal-self-restart`），不给 `NOPASSWD: ALL`。
+4. **sudoers 只放行两条命令**（homebox / photo-frame 的 restart），不给 `NOPASSWD: ALL`。
+   门户重启自己走「进程退出 + Restart=always」，根本不需要 sudo。
    门户是个没有登录的局域网页面，靠一个口令守着升级入口，真出事也只波及这三个服务。
 
 ### 免密规则为什么写在 /etc/sudoers 末尾，而不是 /etc/sudoers.d/
@@ -284,15 +286,23 @@ sudo -n /usr/bin/systemctl restart homebox.service && echo 免密可用
 
 ### 门户怎么重启自己
 
-`systemctl restart portal.service` 不能再由门户自己直接调（它会随着 cgroup 一起被杀），
-也不要用带参数的 sudo 规则——**sudoers 的带参规则必须逐字匹配，带 `=` 的参数
-（`--on-active=3`）实测根本匹配不上**，报的错还是那句 `a password is required`，
-极难定位。中间还试过 `systemd-run --unit portal-self-restart`，又遇到临时单元名残留
-（`Failed to start transient timer unit: Unit xxx.service already exists`）。
+这里连着踩了三个坑，最后落到最朴素的办法上：
 
-最终方案最简单：`sudo -n /usr/local/bin/portal-self-restart`，规则里**一个参数都不带**。
-这个脚本干两件事：等 2 秒（让 HTTP 响应先发回浏览器），然后 `systemctl restart portal.service`。
-调用它的进程确实会被一起杀掉，但重启请求已经交给 systemd 了，重启照常进行。
+1. **`systemd-run` + 带参 sudo 规则**：失败。sudoers 的带参规则必须逐字匹配，
+   带 `=` 的参数（`--on-active=3`）实测匹配不上，报的还是 `a password is required`，极难定位；
+   换成空格分隔能匹配了，又撞上临时单元名残留
+   （`Failed to start transient timer unit: Unit xxx.service already exists`）。
+2. **无参数调用一个系统级脚本**：SSH 里手测 `sudo -n /usr/local/bin/portal-self-restart` 成功，
+   但从门户进程里调一律失败。
+3. 真正的原因是 `portal.service` 里的 **`NoNewPrivileges=true`**——它禁止 sudo 提权。
+   这条是安全加固，不该为了重启去拆掉，而且它只影响进程内的 sudo，SSH 里手测完全看不出来。
+
+最终方案不需要任何权限：**门户升级完自己后直接让进程退出，由 `Restart=always` 拉起新代码**。
+配合 `portal.service` 里的 `StartLimitIntervalSec=0`（关掉启动频率限制），连续升级也不会被锁住。
+
+代价是：如果某次拉下来的代码本身起不来，它会每 3 秒重启一次、一直循环，页面打不开。
+所以升级前先看「待升级的提交」是什么，别把没验证过的代码推上去。
+真要救回来，SSH 上去 `git reset --hard HEAD~1` 就行。
 
 ### 升级出问题怎么查
 
@@ -421,10 +431,10 @@ sudo systemctl status portal homebox photo-frame
 | 状态码 | 含义 |
 | --- | --- |
 | 200 | 已升级并重启（`already: true` 表示本来就是最新） |
-| 202 | 门户升级自己：已合并，3 秒后重启，页面需重新加载 |
+| 202 | 门户升级自己：已合并，进程即将退出、由 systemd 拉起新代码，页面需自动刷新 |
 | 400 | 应用不存在或没配 `unit`，或未纳管版本 |
 | 401 | 口令不对 |
-| 409 | 工作区有未提交改动 / 本地有未推送提交 |
+| 409 | 已跟踪文件有未提交改动 / 本地有未推送提交 |
 | 502 | 拉取镜像失败 |
 | 503 | 服务端还没设置口令，功能未启用 |
 

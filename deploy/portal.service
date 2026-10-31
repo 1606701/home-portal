@@ -2,6 +2,9 @@
 Description=Home Portal (LAN dashboard)
 After=network-online.target
 Wants=network-online.target
+# 一键升级重启门户的方式是「进程自己退出，靠 Restart=always 拉起」，
+# 所以不能有启动频率限制，否则连续两次升级就会被 systemd 锁在 failed 状态。
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

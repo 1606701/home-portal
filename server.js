@@ -1280,6 +1280,16 @@ function handle(req, res) {
       }
       return doUpgrade(body).then((r) => {
         sendJSON(res, r.status, r.body);
+        if (r.selfExit) {
+          // 门户自己换了代码。等响应真正写完再退出，
+          // 由 portal.service 的 Restart=always 拉起新进程（不需要任何权限）。
+          res.on('finish', () => {
+            setTimeout(() => {
+              console.log('一键升级：即将重启门户（进程退出，交给 systemd 拉起）');
+              process.exit(0);
+            }, 200);
+          });
+        }
       });
     }).catch((err) => {
       console.error('[upgrade] 升级时出错：' + (err && err.message ? err.message : err));
@@ -1446,8 +1456,10 @@ async function probeVersion(app) {
     out.current = { short: parts[0] || '?', subject: parts[1] || '', date: parts[2] || '' };
   }
 
-  // 脏工作区必须知道：「有未提交改动」时页面要明确告诉人为什么不能升级
-  const dirtyRes = await run('git', ['-C', app.dir, 'status', '--porcelain']);
+  // 脏工作区必须知道：「有未提交改动」时页面要明确告诉人为什么不能升级。
+  // 只看已跟踪文件：未跟踪文件不会被 merge --ff-only 覆盖（真撞车了 merge 自己会报错），
+  // 把它们算进来只会让一个不相干的临时文件把升级功能永久锁死。
+  const dirtyRes = await run('git', ['-C', app.dir, 'status', '--porcelain', '--untracked-files=no']);
   out.dirty = dirtyRes.ok && dirtyRes.stdout.trim() !== '';
 
   const hasRemote = await run('git', ['-C', app.dir, 'rev-parse', '--verify', '--quiet', remoteRef]);
@@ -1528,18 +1540,21 @@ function tokenMatches(given) {
 
 /**
  * 重启某个 unit。
- * 门户自己是特殊处理：调用 /usr/local/bin/portal-self-restart，
- * 它 sleep 2 秒后执行 systemctl restart portal.service —— 先让 HTTP 响应发出去再重启。
+ *
+ * 门户自己是特殊处理，而且**不走 sudo**：portal.service 里设了 NoNewPrivileges=true，
+ * 这条设置会禁止 sudo 提权（实测从进程里调 sudo 一律失败，而在 SSH 里手测是通的），
+ * 所以任何「让门户自己 sudo 重启自己」的方案都是死路。
+ *
+ * 改用最朴素的机制：进程自己退出，交给 Restart=always 拉起新代码。
+ * 这不需要任何权限；配合 portal.service 里的 StartLimitIntervalSec=0，
+ * 连续升级也不会被 systemd 的启动频率限制锁住。
  * @param {string} unit unit 名
- * @returns {Promise<{ok:boolean, output:string}>} 结果
+ * @returns {Promise<{ok:boolean, output:string, self?:boolean}>} 结果
  */
 async function restartUnit(unit) {
   if (unit === 'portal.service') {
-    // 无参数调用一个系统级脚本来重启自己。为什么不用 systemd-run：
-    // sudoers 的带参规则必须逐字匹配，带 = 的参数实测匹配不上；
-    // 临时单元名还会残留冲突（Unit xxx.service already exists）。
-    const res = await run('sudo', ['-n', '/usr/local/bin/portal-self-restart'], 8000);
-    return { ok: res.ok, output: lastLine(res.stderr) || res.error || '' };
+    // 真正的退出由调用方在响应发完之后触发（见 handle 里的 selfExit）
+    return { ok: true, output: '', self: true };
   }
   const res = await run('sudo', ['-n', '/usr/bin/systemctl', 'restart', unit], 25000);
   return { ok: res.ok, output: lastLine(res.stderr) || res.error || '' };
@@ -1596,7 +1611,7 @@ async function doUpgrade(body) {
   if (!st.managed) return { status: 400, body: { ok: false, error: st.error || '未纳入版本管理' } };
   if (!st.fetched) return { status: 502, body: { ok: false, error: st.error || '拉取镜像失败' } };
   if (st.dirty) {
-    return { status: 409, body: { ok: false, error: '这个项目有未提交改动，先处理再升级（git status 看看）' } };
+    return { status: 409, body: { ok: false, error: '这个项目有已跟踪文件被改过、没提交，先处理再升级（git status 看看）' } };
   }
   if (st.ahead > 0) {
     return { status: 409, body: { ok: false, error: '本地有 ' + st.ahead + ' 个没推送的提交，先推上去再升级' } };
@@ -1616,8 +1631,11 @@ async function doUpgrade(body) {
   versionsCache = { at: 0, value: null };
 
   const restarted = await restartUnit(target.unit);
+  const isSelf = target.unit === 'portal.service';
   return {
-    status: target.unit === 'portal.service' ? 202 : 200,
+    status: isSelf ? 202 : 200,
+    // selfExit 只给 handle() 用：等响应发完再退出进程，不是给浏览器看的
+    selfExit: !!restarted.self,
     body: {
       ok: true,
       id: st.id,
@@ -1627,8 +1645,8 @@ async function doUpgrade(body) {
       applied: st.behind,
       restarted: restarted.ok,
       restartHint: restarted.ok ? null : ('代码已更新，但服务重启失败：' + restarted.output + '。请手动 sudo systemctl restart ' + target.unit),
-      message: target.unit === 'portal.service'
-        ? '已更新，门户将在 3 秒后重启'
+      message: isSelf
+        ? '已更新，门户马上重启，几秒后页面会自动刷新'
         : '已更新并重启 ' + target.unit
     }
   };

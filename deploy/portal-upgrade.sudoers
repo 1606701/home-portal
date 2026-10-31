@@ -9,10 +9,9 @@
 # sudo 是「最后匹配的规则生效」，放在 sudoers.d 里的 NOPASSWD 会被那条 ALL 覆盖，
 # 实测表现为 `sudo -n` 报 "a password is required"。所以必须追加到文件最末尾。
 #
-# 为什么第三条不写参数：sudoers 的带参规则必须逐字匹配，带 `=` 的参数
-# （--on-active=3）实测匹配不上。所以改成「无参数地调用一个系统级脚本」，
-# 重启逻辑放在 /usr/local/bin/portal-self-restart 里，规则就一行，不会再写错。
+# 为什么只有两条、没有「重启门户自己」：portal.service 设了 NoNewPrivileges=true，
+# 它会禁止 sudo 提权，所以门户进程自己调 sudo 一律失败（SSH 里手测却是通的，极难发现）。
+# 门户自我重启改用「进程退出 + Restart=always」，不需要任何权限，见 server.js restartUnit()。
 HwHiAiUser ALL=(root) NOPASSWD: /usr/bin/systemctl restart homebox.service
 HwHiAiUser ALL=(root) NOPASSWD: /usr/bin/systemctl restart photo-frame.service
-HwHiAiUser ALL=(root) NOPASSWD: /usr/local/bin/portal-self-restart
 # <<< portal-upgrade <<<

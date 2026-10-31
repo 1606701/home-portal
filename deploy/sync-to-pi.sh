@@ -61,10 +61,6 @@ rm -rf /tmp/portal-sync
 echo "  落盘完成：$(ls "$DIR" | tr '\n' ' ')"
 
 SUDO install -m 644 "$DIR/deploy/portal.service" /etc/systemd/system/portal.service
-# 自重启助手：门户「一键升级」重启自己要靠它，缺了会导致升级后服务不重启
-if [ -f "$DIR/deploy/portal-self-restart.sh" ]; then
-  SUDO install -m 755 -o root -g root "$DIR/deploy/portal-self-restart.sh" /usr/local/bin/portal-self-restart
-fi
 if [ -f "$DIR/deploy/portal-watchdog.sh" ]; then
   SUDO install -m 755 "$DIR/deploy/portal-watchdog.sh"      /usr/local/bin/portal-watchdog.sh
   SUDO install -m 644 "$DIR/deploy/portal-watchdog.service" /etc/systemd/system/portal-watchdog.service
