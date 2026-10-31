@@ -8,6 +8,7 @@
 # 用法：
 #   bash deploy/sync-to-pi.sh
 #   PI=HwHiAiUser@192.168.3.185 SUDO_PASS=xxx bash deploy/sync-to-pi.sh   # 免交互
+#   SYNC_GIT=1 bash deploy/sync-to-pi.sh        # 连 .git 一起同步（板子上 git log 才准）
 #
 # 说明：SUDO_PASS 会作为环境变量出现在板子的进程列表里（仅几毫秒）。
 # 在意的话就不传，让远端 sudo 交互式问你密码。
@@ -24,7 +25,13 @@ fi
 echo "  提交: $(git -C "$SRC" log --oneline -1 2>/dev/null || echo '非 git 仓库')"
 
 echo "===== 2. 传输 ====="
-if ! tar czf - --exclude=.git --exclude=node_modules --exclude='*.log' -C "$SRC" . \
+# SYNC_GIT=1 时连 .git 一起同步，让板子上的 git log 和实际部署内容保持一致。
+# 默认不同步：部署只需要工作区文件，.git 传过去只是为了让「板子现在跑的是哪个提交」可查。
+EXCLUDES="--exclude=node_modules --exclude=*.log"
+if [ "${SYNC_GIT:-0}" != "1" ]; then
+  EXCLUDES="$EXCLUDES --exclude=.git"
+fi
+if ! tar czf - $EXCLUDES -C "$SRC" . \
   | ssh "$PI" 'rm -rf /tmp/portal-sync && mkdir -p /tmp/portal-sync && tar xzf - -C /tmp/portal-sync && echo "  已上传"'; then
   echo "  ✗ 上传失败（检查网络 / SSH）"
   exit 1
