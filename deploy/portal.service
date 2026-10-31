@@ -15,8 +15,16 @@ Restart=always
 RestartSec=3
 # 监听 80 端口但不是 root：只授这一项能力
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
+# 这里曾经有 NoNewPrivileges=true 和 CapabilityBoundingSet=CAP_NET_BIND_SERVICE，
+# 为了让门户能一键重启 homebox / photo-frame，两项都必须去掉：
+#   1. NoNewPrivileges=true 会让它调 sudo 时直接被拒，报
+#      「The "no new privileges" flag is set, which prevents sudo from running as root」
+#   2. CapabilityBoundingSet 只留 CAP_NET_BIND_SERVICE 时，sudo 拿不到 CAP_SETUID/CAP_SETGID，
+#      即使没有第 1 条也切不过去。
+# 这两个坑的共同点是：**从 SSH 里手测 sudo 一切正常，只有从门户进程里调才失败**，
+# 极难定位，所以在这里写清楚，别再有人加回去。
+# 提权范围仍由 /etc/sudoers 末尾的两条 NOPASSWD 规则限定：只能 restart 那两个服务。
+NoNewPrivileges=false
 # 这块板子的 journald 不记录任何应用日志（journalctl 只有开机那几行，/var/log/syslog 也是空的），
 # 所以 stdout/stderr 直接落文件，否则出了事完全无从查起。文件由看门狗每 2 分钟裁剪。
 StandardOutput=append:/var/log/portal.log
