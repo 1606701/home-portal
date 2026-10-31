@@ -188,7 +188,85 @@ cat /var/log/portal-watchdog.log             # 应有「两次都无响应，重
 | SIGSTOP 冻住进程后触发 | HTTP 两次无响应 → restart → 611ms 后恢复 |
 | 之后连续运行 2 小时（约 60 次检查） | 0 次误重启，日志零增长 |
 
-## 二、加/改应用
+## 二、版本对比与一键升级
+
+页面上有一块「版本与升级」，列出三个项目当前跑的是哪个提交、镜像里有没有更新的，
+有就列出来待升级的提交，点一下按钮就合并代码并重启对应服务。
+
+**升级来源不是 GitHub，是板子上的镜像。** 因为板子连不上 `github.com:443`
+（`getent hosts` 能解析，但 `curl` 8 秒超时，`git pull` 卡 130 秒后 `Connection timed out`）。
+所以流程反过来：
+
+```
+开发机  ──git push mirror main──▶  板子 ~/Yangfan_WorkSpace/git-mirror/*.git（bare 镜像）
+                                          │
+页面点「升级」 ──git fetch + merge --ff-only──┘  ──▶  systemctl restart 对应服务
+```
+
+好处是「检查有没有新版本」和「升级」都是板子本地文件操作，**完全不依赖外网**，
+你什么时候推、板子什么时候就能升。
+
+### 发布一个新版本
+
+在开发机上：
+
+```bash
+cd /d/yangf_file/portal          # 或 HomeBox、photo-frame
+git add -A && git commit -m '...'
+git push mirror main             # ← 这一步就是「发布」，板子立刻能看到有新版本
+```
+
+`mirror` 远端指向板子的 bare 镜像。三个项目都配好了：
+
+| 项目 | 工作目录（板子） | 镜像 | systemd 单元 |
+| --- | --- | --- | --- |
+| 门户 | `~/Yangfan_WorkSpace/portal` | `git-mirror/home-portal.git` | `portal.service` |
+| 家庭收纳 | `~/Yangfan_WorkSpace/HomeBox` | `git-mirror/HomeBox.git` | `homebox.service` |
+| 电子相框 | `~/Yangfan_WorkSpace/photo-frame` | `git-mirror/photo-frame.git` | `photo-frame.service` |
+
+想把镜像也推到 GitHub 备份就额外 `git push origin main`（GitHub 经常连不上，见「更新代码」）。
+
+### 页面上升级
+
+1. 列表里出现「落后 N 个提交」，还会列出这几条提交的标题，看清楚点的是什么；
+2. 第一次点「升级」要输入口令，输对了会记在浏览器里，之后不用再输；
+3. 合并完成会自动重启对应服务，门户升级自己时会延迟 3 秒重启并自动刷新页面。
+
+口令在板子上生成：
+
+```bash
+cd ~/Yangfan_WorkSpace/portal
+bash deploy/set-token.sh          # 生成/重置口令，并装好 sudoers 规则
+bash deploy/set-token.sh --show    # 查看当前口令
+```
+
+口令存在仓库根目录的 `.upgrade-token`（权限 600，已 gitignore），**不在 config.json 里**
+——这个仓库是公开的，凭据不能进版本库。没设置口令时升级接口返回 503，按钮直接不显示，
+不存在「没口令就放行」这种默认。
+
+### 四条安全底线
+
+1. **只做 `merge --ff-only`**，不做 rebase / reset：升级不改写历史，也不丢提交。
+2. **工作区有未提交改动就拒绝**，本地有未推送提交也拒绝：不覆盖你手改的东西。
+3. **HomeBox 的 `data/` 不在版本库里**（`.gitignore` 里有 `data/`，`git ls-files data/` 为空），
+   所以 ff 合并碰不到物品数据和照片。升级前后拿四个计数一比对就能确认。
+4. **sudoers 只放行三条命令**（两个服务的 restart + 用 `systemd-run` 重启门户自己），
+   不给 `NOPASSWD: ALL`。门户是个没有登录的局域网页面，靠一个口令守着升级入口，
+   真出事也只波及这三个服务。
+
+### 升级出问题怎么查
+
+```bash
+# 页面报错信息会直接说原因（口令错 / 工作区脏 / 拉取失败 / 合并失败）
+cd ~/Yangfan_WorkSpace/portal && git status && git log --oneline -3
+cat /var/log/portal.log                    # 服务端日志
+sudo systemctl status portal homebox photo-frame
+```
+
+镜像坏了（比如误删）就重建：在开发机上 `git push mirror main --force`。
+`git fetch` 只更新远端跟踪分支，不会动工作区，所以什么时候 fetch 都安全。
+
+## 三、加/改应用
 
 只改 `config.json`，**不用重启**（每次请求都现读，读坏了继续用上一份好的）：
 
@@ -216,7 +294,7 @@ cat /var/log/portal-watchdog.log             # 应有「两次都无响应，重
   服务端读该目录里**最新的那个文件**的 mtime 当作「最近一次备份」，
   超过 30 小时卡片变黄（说明每天 03:00 的定时任务可能断了）。不配或目录空 → 整张卡不显示。
 
-## 三、接口
+## 四、接口
 
 ### `GET /api/apps`
 
@@ -274,12 +352,48 @@ cat /var/log/portal-watchdog.log             # 应有「两次都无响应，重
 
 `npu.stale = true` 表示最近一次采样失败了，页面上显示的是上一次成功的值。
 
+### `GET /api/versions`
+
+版本对比。对 `config.json` 里的 `self` 和每个配了 `dir` 的 `apps` 跑一遍 git：
+`git fetch`（只更新远端跟踪分支，不动工作区）→ 当前提交 / 镜像提交 / `behind` / `ahead` /
+是否脏 / 待升级提交列表。结果缓存 10 秒，升级成功后缓存会被主动打掉。
+
+```json
+{ "ok": true, "hasToken": true,
+  "list": [ { "id": "homebox", "name": "家庭收纳", "managed": true,
+              "current": { "short": "b5b28d9", "subject": "…", "date": "2026-10-30T23:42:12+08:00" },
+              "mirror":  { "short": "b5b28d9", "subject": "…", "date": "…" },
+              "behind": 0, "ahead": 0, "dirty": false,
+              "pending": [], "fetched": true, "error": null } ] }
+```
+
+`hasToken` 是「服务端配没配升级口令」，前端据此决定要不要显示升级按钮。
+
+### `POST /api/upgrade`
+
+```json
+{ "id": "homebox", "token": "…" }
+```
+
+顺序：校验口令 → 重探一次版本（不信缓存）→ 拒绝脏工作区 / 未推送提交 / 已是最新
+→ `git merge --ff-only` → 重启对应 unit。只有这一个接口会改磁盘，所以只收 POST。
+
+| 状态码 | 含义 |
+| --- | --- |
+| 200 | 已升级并重启（`already: true` 表示本来就是最新） |
+| 202 | 门户升级自己：已合并，3 秒后重启，页面需重新加载 |
+| 400 | 应用不存在或没配 `unit`，或未纳管版本 |
+| 401 | 口令不对 |
+| 409 | 工作区有未提交改动 / 本地有未推送提交 |
+| 502 | 拉取镜像失败 |
+| 503 | 服务端还没设置口令，功能未启用 |
+
 ### 静态文件
 
 `GET /` → `public/index.html`；`/style.css`、`/app.js`、`/favicon.svg` 直接发。
 只发 `public/` 下的文件，`..` 和畸形编码一律 404。
 
-## 四、为什么这么做（改代码前先看这几条）
+## 五、为什么这么做（改代码前先看这几条）
 
 这几条都是**在这块板子上实测过**的，不是通用最佳实践：
 
@@ -361,7 +475,7 @@ cat /var/log/portal-watchdog.log             # 应有「两次都无响应，重
     为什么不用「这一轮是否成功」：一次瞬时失败（`systemd` 忙、超时）就会把绿牌翻成灰牌，
     那是另一种撒谎。粘性标志 + `stale`（保留上一次的值）才是对的组合。
 
-## 五、排错
+## 六、排错
 
 | 现象 | 原因 / 处理 |
 | --- | --- |
@@ -377,7 +491,7 @@ cat /var/log/portal-watchdog.log             # 应有「两次都无响应，重
 | 备份卡根本不出现 | `config.json` 没配 `backup`，或 `dir` 不存在 / 是空目录。先 `ls -la <dir>` 确认里面有文件 |
 | NPU 卡灰字末尾多出「数据稍旧」 | NPU 采样器最近一次失败了（`npu.stale = true`），显示的是上一次成功采到的值。日志找 `[npu] 采样失败` |
 
-## 六、本机（Windows / macOS）怎么调前端
+## 七、本机（Windows / macOS）怎么调前端
 
 ```bash
 cd portal
