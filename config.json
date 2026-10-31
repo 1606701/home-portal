@@ -10,7 +10,8 @@
     "dir": "/home/HwHiAiUser/Yangfan_WorkSpace/portal",
     "unit": "portal.service",
     "branch": "main",
-    "mirror": "mirror"
+    "mirror": "mirror",
+    "mirrorPath": "/home/HwHiAiUser/Yangfan_WorkSpace/git-mirror/home-portal.git"
   },
   "apps": [
     {
@@ -22,7 +23,8 @@
       "dir": "/home/HwHiAiUser/Yangfan_WorkSpace/HomeBox",
       "unit": "homebox.service",
       "branch": "main",
-      "mirror": "mirror"
+      "mirror": "mirror",
+      "mirrorPath": "/home/HwHiAiUser/Yangfan_WorkSpace/git-mirror/HomeBox.git"
     },
     {
       "id": "photo-frame",
@@ -33,7 +35,8 @@
       "dir": "/home/HwHiAiUser/Yangfan_WorkSpace/photo-frame",
       "unit": "photo-frame.service",
       "branch": "main",
-      "mirror": "mirror"
+      "mirror": "mirror",
+      "mirrorPath": "/home/HwHiAiUser/Yangfan_WorkSpace/git-mirror/photo-frame.git"
     }
   ]
 }

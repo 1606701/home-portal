@@ -13,6 +13,15 @@ DIR=$(cd "$(dirname "$0")/.." && pwd)
 TOKEN_FILE="$DIR/.upgrade-token"
 SUDOERS=/etc/sudoers.d/portal-upgrade
 
+# 允许用 SUDO_PASS 环境变量免交互（仅本机调试方便；不传就让 sudo 自己问密码）
+SUDO() {
+  if [ -n "${SUDO_PASS:-}" ]; then
+    echo "$SUDO_PASS" | sudo -S "$@" 2>/dev/null
+  else
+    sudo "$@"
+  fi
+}
+
 if [ "${1:-}" = "--show" ]; then
   if [ -f "$TOKEN_FILE" ]; then
     echo "当前口令：$(cat "$TOKEN_FILE")"
@@ -32,15 +41,15 @@ echo "  已写入 $TOKEN_FILE（权限 600）"
 echo "  口令：$TOKEN"
 
 echo "===== 2. 安装 sudoers 规则（只放行三条具体命令）====="
-sudo install -m 440 -o root -g root "$DIR/deploy/portal-upgrade.sudoers" "$SUDOERS"
+SUDO install -m 440 -o root -g root "$DIR/deploy/portal-upgrade.sudoers" "$SUDOERS"
 echo "  已安装 $SUDOERS"
 
 echo "===== 3. 校验 sudoers 语法 ====="
-if sudo visudo -c >/dev/null 2>&1; then
+if SUDO visudo -c >/dev/null 2>&1; then
   echo "  语法 OK"
 else
   echo "  ✗ 语法有问题，正在回滚"
-  sudo rm -f "$SUDOERS"
+  SUDO rm -f "$SUDOERS"
   exit 1
 fi
 

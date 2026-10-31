@@ -1030,14 +1030,34 @@ function readConfig() {
         name: String(a.name || a.id),
         desc: String(a.desc || ''),
         port: Number(a.port),
-        accent: String(a.accent || '#B4633A')
+        accent: String(a.accent || '#B4633A'),
+        // 版本对比/升级用。没配 dir 就表示这个应用不纳管版本，
+        // 页面上会显示「未纳入版本管理」，而不是假装能升级。
+        dir: a.dir ? String(a.dir) : null,
+        unit: a.unit ? String(a.unit) : null,
+        branch: String(a.branch || 'main'),
+        mirror: String(a.mirror || 'mirror'),
+        mirrorPath: a.mirrorPath ? String(a.mirrorPath) : null
       }));
     // backup 是可选段：没配就 null，前端据此不显示这张卡
     const rawBackup = parsed.backup;
     const backup = (rawBackup && typeof rawBackup === 'object' && rawBackup.dir)
       ? { label: String(rawBackup.label || '备份'), dir: String(rawBackup.dir) }
       : null;
-    const cfg = { title: String(parsed.title || DEFAULT_CONFIG.title), apps: clean, backup };
+    // self 是门户自己：它不在 apps 里，但升级时也要能看到自己的版本
+    const rawSelf = parsed.self;
+    const self = (rawSelf && typeof rawSelf === 'object' && rawSelf.dir)
+      ? {
+        id: String(rawSelf.id || 'portal'),
+        name: String(rawSelf.name || '门户'),
+        dir: String(rawSelf.dir),
+        unit: String(rawSelf.unit || 'portal.service'),
+        branch: String(rawSelf.branch || 'main'),
+        mirror: String(rawSelf.mirror || 'mirror'),
+        mirrorPath: rawSelf.mirrorPath ? String(rawSelf.mirrorPath) : null
+      }
+      : null;
+    const cfg = { title: String(parsed.title || DEFAULT_CONFIG.title), apps: clean, backup, self };
     lastGoodConfig = cfg;
     return cfg;
   } catch (err) {
@@ -1297,7 +1317,11 @@ function handle(req, res) {
 
   if (pathname === '/api/apps') {
     const cfg = readConfig();
-    sendJSON(res, 200, { ok: true, title: cfg.title, apps: cfg.apps });
+    // 只吐前端要用的字段：dir/unit 是服务端内部信息，没必要发给浏览器
+    const apps = cfg.apps.map((a) => ({
+      id: a.id, name: a.name, desc: a.desc, port: a.port, accent: a.accent
+    }));
+    sendJSON(res, 200, { ok: true, title: cfg.title, apps: apps });
     return;
   }
 
@@ -1406,8 +1430,12 @@ async function probeVersion(app) {
   out.branch = branch;
   out.remoteRef = remoteRef;
 
-  // 只更新远端跟踪分支，工作区一个字节都不碰
-  const fetchRes = await run('git', ['-C', app.dir, 'fetch', '--quiet', remote,
+  // 只更新远端跟踪分支，工作区一个字节都不碰。
+  // 优先用配置里的绝对路径（mirrorPath）当抓取源，而不是仓库里配的 remote：
+  // 门户自己的仓库会被从开发机整份同步过去（含 .git/config），
+  // 那时 remote 可能指向开发机的 SSH 地址，在板子上根本用不了。
+  const source = app.mirrorPath || remote;
+  const fetchRes = await run('git', ['-C', app.dir, 'fetch', '--quiet', source,
     '+' + 'refs/heads/' + branch + ':refs/remotes/' + remote + '/' + branch], 10000);
   out.fetched = fetchRes.ok;
   if (!fetchRes.ok) out.error = '拉取镜像失败：' + (lastLine(fetchRes.stderr) || fetchRes.error || '未知原因');
