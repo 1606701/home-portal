@@ -15,8 +15,10 @@ portal/
   public/style.css       样式（暖木陶土，和 HomeBox 一套）
   public/app.js          前端逻辑（轮询 / 渲染 / 降级）
   public/favicon.svg     图标
-  deploy/portal.service  systemd unit
-  README.md              本文件
+  deploy/portal.service          systemd unit
+  deploy/portal-watchdog.*       看门狗（每 2 分钟自愈，见下文）
+  deploy/sync-to-pi.sh           开发机 → 板子 的一键部署脚本
+  README.md                      本文件
 ```
 
 ## 一、部署（在香橙派上）
@@ -78,8 +80,13 @@ Ubuntu 22.04 的 systemd 249 支持这两个键。
 ### 查看日志
 
 ```bash
-journalctl -u portal -n 50 --no-pager
+tail -50 /var/log/portal.log        # 门户自己的输出
+tail -50 /var/log/portal-watchdog.log   # 看门狗的动作用（正常时一行都不写）
 ```
+
+**不要用 `journalctl -u portal`**：这块板子的 journald 不记录任何应用日志
+（连 `logger` 写进去都查不到，`/var/log/syslog` 也是空的），所以 `portal.service` 里
+用 `StandardOutput=append:/var/log/portal.log` 把输出直接落到文件，由看门狗每 2 分钟裁剪。
 
 正常启动长这样：
 
@@ -88,24 +95,49 @@ journalctl -u portal -n 50 --no-pager
   本机访问： http://127.0.0.1
   局域网：  http://192.168.3.185
   网卡：    wlan0  应用：2 个
-  采样器：  CPU/网络/磁盘 已预热；NPU 已识别 310B4；服务健康 0 个失败
+  采样器：  CPU/网络/磁盘 已预热；NPU 已识别 310B4；服务健康 5 个失败
 ```
 
 最后一行是预热结果。CPU / 网络 / 磁盘这三项要现采两次（间隔 120ms）才有 delta，
 放在启动时做掉，第一个 `/api/stats` 就不用替启动过程付账。
-NPU / 失败服务那几项由采样器在启动时立刻跑一轮，所以这里已经能看到结果。
+NPU / 失败服务这两项会等首轮采完（`npu-smi` 一次约 470ms）再打，所以这行会晚半秒出现。
+三种状态是分开的，别混：`已识别 310B4` / `未检测到`（真没这硬件）/ `首轮采样未完成`。
 
 ### 更新代码
 
-板子上的 `~/Yangfan_WorkSpace/portal` 是一个 git 检出，以后更新只要：
+**更新方向是「开发机 → 板子」，不是「板子上去 pull」。**
+
+香橙派连不上 GitHub：`getent hosts github.com` 能解析出 IP，但 `curl https://github.com/`
+8 秒超时，`git pull` 会卡到 130 秒后报 `Connection timed out`。所以 git 在这里只当版本记录和备份，
+部署走局域网。在开发机（Windows / Git Bash）上：
 
 ```bash
-cd ~/Yangfan_WorkSpace/portal
-git pull --ff-only
-sudo systemctl restart portal
+cd /d/yangf_file/portal
+git add -A && git commit -m '...'      # 先留版本
+git push                                # 备份到 GitHub（见下方「推送常失败」）
+bash deploy/sync-to-pi.sh               # 打包 → 传输 → 落盘 → 装 unit → 重启 → 健康检查
 ```
 
-只改 `config.json` 的应用清单**不需要重启**（每次请求现读）；改了 `server.js` 或 `public/` 下任何文件必须重启。
+`sync-to-pi.sh` 做四件事，都是有原因的：
+
+1. `tar` 打包并排除 `.git` / `node_modules`（板子上的 `.git` 保持原样，不动它）。
+2. 落盘后 `sed -i 's/\r$//'`：Windows 工作区是 CRLF，不转会在板子上变成
+   `bad interpreter: /bin/bash^M`。仓库里另有 `.gitattributes` 强制 `eol=lf` 兜底。
+3. 重装 `deploy/*.service|timer` 并 `daemon-reload`——改了 unit 忘了 reload 是最常见的坑。
+4. `restart portal` 后轮询 `http://127.0.0.1/` 直到 200，最多等 30 秒。
+
+只改 `config.json` 的应用清单**不需要重启**（每次请求现读）；改了 `server.js` 或 `public/` 下任何文件必须重启，
+`sync-to-pi.sh` 会自动重启。
+
+**推送常失败**：本机到 `github.com:443` 也经常连不上（DNS 解析出来的 IP 被挡）。
+能用的办法是钉一个当下可连的 IP：
+
+```bash
+git -c http.curloptResolve=github.com:443:20.205.243.166 push
+```
+
+可用的 IP 会变，`20.205.243.166` 和 `140.82.112.3` 都成功过也失效过。推不上去不影响部署——
+`sync-to-pi.sh` 走局域网，跟 GitHub 无关。
 
 ### 看门狗（为什么必须有）
 
@@ -115,9 +147,14 @@ systemd 不会自己拉起**，必须有人再 `start` 一次。
 
 `deploy/portal-watchdog.{sh,service,timer}` 每 2 分钟检查一次：
 
-- 服务没在跑 → `start`
-- 服务在跑但 HTTP 无响应 → 隔 3 秒重试一次，仍不通才 `restart`（避免瞬时抖动误重启）
-- 一切正常 → 静默退出，不刷日志
+- 没在跑 → `start`
+- 在跑但 HTTP 两次都不通（中间隔 5 秒）→ `restart`（避免瞬时抖动误重启）
+- 一切正常 → 静默退出，不写日志
+
+**成功标准是「HTTP 真的返回 200」，不是「systemd 说 active」。** 这两件事差得很远：
+实测 systemd 判 active 只要 4ms，端口真正可服务要 125ms；冷启动（刚 stop 完再 start）
+实测 3.6 秒。第一版看门狗用固定 `sleep 3` 判断，正好卡在 3.6 秒之下，于是把
+「已在恢复中」误报成「启动失败」——现在改成轮询 HTTP，最多等 30 秒。
 
 安装：
 
@@ -129,14 +166,27 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now portal-watchdog.timer
 ```
 
-验证它真的会救：
+验证它真的会救（两条路径都要验，因为它们是两段不同的代码）：
 
 ```bash
-sudo systemctl stop portal              # 故意弄挂
-sudo systemctl start portal-watchdog    # 手动触发一次，不用等满 2 分钟
-systemctl is-active portal              # 应该是 active
-journalctl -t portal-watchdog -n 5      # 应能看到「检测到 portal.service 未运行」
+# A. 服务被停掉
+sudo systemctl stop portal
+sudo systemctl start portal-watchdog          # 手动触发，不用等满 2 分钟
+cat /var/log/portal-watchdog.log             # 应有「检测到 portal.service 未运行」+「启动成功…XXXX ms」
+
+# B. 进程活着但不响应：冻住它，模拟卡死
+sudo kill -STOP $(systemctl show -p MainPID --value portal)   # 注意是 SIGSTOP，不是 kill
+sudo systemctl start portal-watchdog
+cat /var/log/portal-watchdog.log             # 应有「两次都无响应，重启」+「重启后已恢复」
 ```
+
+实测记录（2026-10-31）：
+
+| 场景 | 结果 |
+| --- | --- |
+| 手动 stop 后触发 | 检测到 inactive → start → 3622ms 后可服务 |
+| SIGSTOP 冻住进程后触发 | HTTP 两次无响应 → restart → 611ms 后恢复 |
+| 之后连续运行 2 小时（约 60 次检查） | 0 次误重启，日志零增长 |
 
 ## 二、加/改应用
 
@@ -315,7 +365,7 @@ journalctl -t portal-watchdog -n 5      # 应能看到「检测到 portal.servic
 
 | 现象 | 原因 / 处理 |
 | --- | --- |
-| 顶部一直显示「暂时取不到状态」 | 服务端 `/api/stats` 挂了，`journalctl -u portal -n 50` 看日志；页面本身还能用 |
+| 顶部一直显示「暂时取不到状态」 | 服务端 `/api/stats` 挂了，`tail -50 /var/log/portal.log` 看日志；页面本身还能用 |
 | 卡片显示「离线」但应用明明在跑 | 应用只监听了 `0.0.0.0` 以外的地址？探测走的是 `127.0.0.1`，应用必须在本机 loopback 上能连 |
 | 内存/存储/CPU 全是「—」 | 不在 Linux 上跑，或 `/proc` 不可读。这是预期的降级，不是 bug |
 | 80 端口起不来 | 见上面「80 端口为什么不用 root」的降级步骤 |

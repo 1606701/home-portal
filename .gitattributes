@@ -1,0 +1,9 @@
+# 这个仓库会从 Windows 编辑、在 Linux 香橙派上运行。
+# 强制 shell/systemd 文件在仓库和工作区都保持 LF，
+# 否则同步到板子上会出现 "bad interpreter: /bin/bash^M"。
+* text=auto eol=lf
+*.sh     text eol=lf
+*.service text eol=lf
+*.timer  text eol=lf
+*.md     text eol=lf
+*.json   text eol=lf

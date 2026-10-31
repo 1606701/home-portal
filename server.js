@@ -703,6 +703,36 @@ function createSampler(name, ttlMs, fn) {
 }
 
 /**
+ * 等若干采样器跑完首轮（拿到结果或报错都算完成），超时也返回，绝不阻塞启动。
+ * 用途只有一个：启动横幅要打「NPU 有没有」「健康检查能不能查」，
+ * 而这两个采样器要几百毫秒，不等就会把「还没采」写成「未检测到」——那是两回事。
+ */
+function waitFirstRound(list, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = () => {
+      const done = list.every((s) => s.at > 0 || s.error);
+      if (done || Date.now() > deadline) return resolve(done);
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+
+// 这三种状态必须分开说：真的识别到 / 真的没有 / 还没采完
+function describeNpu(s) {
+  if (s.error) return '采样失败（' + s.error + '）';
+  if (s.at > 0) return s.value ? '已识别 ' + s.value.chip : '未检测到';
+  return '首轮采样未完成';
+}
+
+function describeHealth(s) {
+  if (s.error) return '无法检查（' + s.error + '）';
+  if (s.succeeded) return (Array.isArray(s.value) ? s.value.length : '?') + ' 个失败';
+  return '首轮采样未完成';
+}
+
+/**
  * 解析 `npu-smi info` 的表格输出。
  *
  * 真实输出长这样（列宽会随版本变，所以不能按固定列号切）：
@@ -1298,11 +1328,14 @@ server.listen(PORT, HOST, () => {
   // 这样第一个 /api/stats 请求也是毫秒级，不用替启动过程付账。
   Promise.all([cpuUsage(), netRateOf(iface.iface), diskIo(DISK_DEV)])
     .then(() => {
+      // NPU 和服务健康这两个慢采样器（npu-smi 一次约 470ms）也要等首轮出结果，
+      // 否则横幅会把「还没采」说成「未检测到」。
+      return waitFirstRound([samplers.npu, samplers.health], 5000);
+    })
+    .then(() => {
       console.log('  采样器：  CPU/网络/磁盘 已预热；' +
-        'NPU ' + (samplers.npu.value ? '已识别 ' + samplers.npu.value.chip : '未检测到') +
-        '；服务健康 ' + (samplers.health.succeeded
-          ? (Array.isArray(samplers.health.value) ? samplers.health.value.length : '?') + ' 个失败'
-          : '无法检查'));
+        'NPU ' + describeNpu(samplers.npu) +
+        '；服务健康 ' + describeHealth(samplers.health));
     })
     .catch(() => { /* 预热失败不影响服务，/api/stats 会自己降级成 null */ });
 });

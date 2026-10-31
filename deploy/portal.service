@@ -14,6 +14,10 @@ RestartSec=3
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
+# 这块板子的 journald 不记录任何应用日志（journalctl 只有开机那几行，/var/log/syslog 也是空的），
+# 所以 stdout/stderr 直接落文件，否则出了事完全无从查起。文件由看门狗每 2 分钟裁剪。
+StandardOutput=append:/var/log/portal.log
+StandardError=append:/var/log/portal.log
 
 [Install]
 WantedBy=multi-user.target
