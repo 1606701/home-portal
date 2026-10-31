@@ -7,7 +7,7 @@
 <meta name="description" content="局域网控制台：常用应用入口与系统状态" />
 <title>控制台</title>
 <link rel="icon" href="favicon.svg" />
-<link rel="stylesheet" href="style.css?v=2" />
+<link rel="stylesheet" href="style.css?v=3" />
 </head>
 <body>
 
@@ -30,6 +30,14 @@
   <section class="block" aria-label="应用">
     <div id="apps" class="apps"></div>
     <p id="apps-empty" class="empty" hidden>还没有配置应用，改 config.json 就能加</p>
+  </section>
+
+  <h2 class="sec-title">版本与升级</h2>
+
+  <section class="block" aria-label="版本与升级">
+    <div id="versions" class="versions"></div>
+    <p id="versions-empty" class="empty" hidden>还没有配置版本信息</p>
+    <p id="versions-note" class="ver-note" hidden></p>
   </section>
 
   <h2 class="sec-title">系统状态</h2>
@@ -151,6 +159,6 @@
   <span id="foot-kernel">—</span>
 </footer>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

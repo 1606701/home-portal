@@ -545,3 +545,161 @@ main {
 @media (prefers-reduced-motion: reduce) {
   .app, .bar > i, .core-bar > i, .minibar > i { transition: none; }
 }
+
+/* ---------- 版本与升级 ---------- */
+
+.versions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ver {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+}
+
+.ver-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ver-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* 状态胶囊：四种状态颜色必须能区分，别只靠文字 */
+.ver-state {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.ver-state.is-ok {
+  color: var(--ok);
+  background: #EAF1E9;
+}
+
+.ver-state.is-new {
+  color: #8A5A17;
+  background: #FBEFD9;
+}
+
+.ver-state.is-warn {
+  color: var(--bad);
+  background: #F8E6E4;
+}
+
+.ver-state.is-na {
+  color: var(--ink-faint);
+  background: var(--line-soft);
+}
+
+.ver-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.ver-hash {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--line-soft);
+  color: var(--ink-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.ver-subj {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ver-pending {
+  margin: 8px 0 0;
+  padding: 8px 10px 8px 26px;
+  border-radius: 10px;
+  background: #FDF6E9;
+  color: var(--ink-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ver-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ver-token {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #FFFDF9;
+  color: var(--ink);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.ver-token:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.ver-btn {
+  flex: none;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #FFFDF9;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ver-btn:hover:not(:disabled) { background: #9E5430; }
+.ver-btn:disabled { opacity: 0.55; cursor: default; }
+
+.ver-msg {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.ver-msg.is-ok { color: var(--ok); }
+.ver-msg.is-warn { color: var(--bad); }
+.ver-msg[hidden] { display: none; }
+
+.ver-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+.ver-note[hidden] { display: none; }
+

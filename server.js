@@ -26,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const net = require('net');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 
 const ROOT = __dirname;
@@ -1246,8 +1247,41 @@ function handle(req, res) {
     return;
   }
 
+  // 升级是唯一会改动磁盘的接口，只允许 POST，且必须带口令
+  if (pathname === '/api/upgrade') {
+    if (req.method !== 'POST') {
+      sendJSON(res, 405, { ok: false, error: '升级只接受 POST' });
+      return;
+    }
+    readJsonBody(req).then((body) => {
+      if (!body) {
+        sendJSON(res, 400, { ok: false, error: '请求体不是合法 JSON' });
+        return;
+      }
+      return doUpgrade(body).then((r) => {
+        sendJSON(res, r.status, r.body);
+      });
+    }).catch((err) => {
+      console.error('[upgrade] 升级时出错：' + (err && err.message ? err.message : err));
+      sendJSON(res, 500, { ok: false, error: '升级过程中出错' });
+    });
+    return;
+  }
+
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     sendText(res, 405, '只支持 GET');
+    return;
+  }
+
+  if (pathname === '/api/versions') {
+    // 走 10 秒缓存：一次采集要跑 3 个应用 × 6 条 git 命令，不该每次轮询都重跑。
+    // 升级成功后 doUpgrade 会主动把缓存打掉，所以点完升级立刻能看到新版本。
+    collectVersions(false).then((list) => {
+      sendJSON(res, 200, { ok: true, hasToken: !!readUpgradeToken(), list: list });
+    }).catch((err) => {
+      console.error('[versions] 采集失败：' + (err && err.message ? err.message : err));
+      sendJSON(res, 200, { ok: false, error: '版本信息采集失败', list: [] });
+    });
     return;
   }
 
@@ -1283,6 +1317,291 @@ function handle(req, res) {
     return;
   }
   sendFile(res, file);
+}
+
+/* ------------------------------------------------------------------ *
+ * 版本对比与一键升级
+ *
+ * 为什么不在页面上直接 `git pull`：这块板子连不上 github.com:443（实测 curl 8 秒超时，
+ * git pull 卡 130 秒后 Connection timed out）。所以升级来源是板子上的 bare 镜像
+ * ~/Yangfan_WorkSpace/git-mirror/*.git，你在开发机上 `git push mirror main` 就等于发布。
+ * 「检查更新」= 工作区 HEAD 与镜像分支比较，全程本地文件操作，不依赖外网。
+ *
+ * 三条安全底线：
+ *   1. 只做 `merge --ff-only`，绝不做 rebase / reset —— 升级不该改写历史，也不该丢提交。
+ *   2. 工作区有未提交改动就拒绝，本地有未推送提交也拒绝 —— 不覆盖你手改的东西。
+ *   3. HomeBox 的 data/ 在 .gitignore 里，ff 合并碰不到它，物品数据和照片不会被升级影响。
+ * ------------------------------------------------------------------ */
+
+/** 口令文件：刻意放在仓库外（因为仓库会推到公开 GitHub），并由 .gitignore 兜底。 */
+const TOKEN_FILE = path.join(ROOT, '.upgrade-token');
+/** 版本信息缓存：3 个应用 × 6 条 git 命令，没必要每次轮询都重跑。 */
+const VERSIONS_TTL_MS = 10 * 1000;
+
+let versionsCache = { at: 0, value: null };
+
+/**
+ * 跑一个外部命令，统一返回结构，不抛异常。
+ * @param {string} cmd 命令
+ * @param {string[]} args 参数
+ * @param {number} [timeoutMs] 超时毫秒
+ * @returns {Promise<{ok:boolean, stdout:string, stderr:string, error:(string|null)}>} 结果
+ */
+function run(cmd, args, timeoutMs) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: timeoutMs || 8000, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        let error = null;
+        if (err) error = err.killed ? '命令超时' : (err.message || String(err));
+        resolve({
+          ok: !err,
+          stdout: String(stdout || ''),
+          stderr: String(stderr || ''),
+          error: error
+        });
+      });
+  });
+}
+
+/** 取错误输出里最后一行有用的内容，别把整段 git 输出怼到页面上。 */
+function lastLine(text) {
+  const lines = String(text || '').trim().split('\n').filter((l) => l.trim());
+  if (!lines.length) return '';
+  return lines[lines.length - 1].trim().slice(0, 200);
+}
+
+/**
+ * 采集某个应用的版本信息（会先 fetch 一次镜像，只更新 refs，不动工作区文件）。
+ * @param {object} app 配置项，需要有 id/name/dir/unit/branch/mirror
+ * @returns {Promise<object>} 版本信息
+ */
+async function probeVersion(app) {
+  const out = {
+    id: app.id,
+    name: app.name,
+    managed: false,
+    current: null,
+    mirror: null,
+    behind: 0,
+    ahead: 0,
+    dirty: false,
+    pending: [],
+    fetched: false,
+    error: null
+  };
+
+  if (!app.dir) {
+    out.error = '没有配置目录';
+    return out;
+  }
+  if (!fs.existsSync(path.join(app.dir, '.git'))) {
+    out.error = '这个目录不是 git 仓库';
+    return out;
+  }
+
+  const branch = app.branch || 'main';
+  const remote = app.mirror || 'mirror';
+  const remoteRef = remote + '/' + branch;
+  out.managed = true;
+  out.branch = branch;
+  out.remoteRef = remoteRef;
+
+  // 只更新远端跟踪分支，工作区一个字节都不碰
+  const fetchRes = await run('git', ['-C', app.dir, 'fetch', '--quiet', remote,
+    '+' + 'refs/heads/' + branch + ':refs/remotes/' + remote + '/' + branch], 10000);
+  out.fetched = fetchRes.ok;
+  if (!fetchRes.ok) out.error = '拉取镜像失败：' + (lastLine(fetchRes.stderr) || fetchRes.error || '未知原因');
+
+  const cur = await run('git', ['-C', app.dir, 'log', '-1', '--format=%h%x00%s%x00%cI']);
+  if (cur.ok) {
+    const parts = cur.stdout.trim().split('\x00');
+    out.current = { short: parts[0] || '?', subject: parts[1] || '', date: parts[2] || '' };
+  }
+
+  // 脏工作区必须知道：「有未提交改动」时页面要明确告诉人为什么不能升级
+  const dirtyRes = await run('git', ['-C', app.dir, 'status', '--porcelain']);
+  out.dirty = dirtyRes.ok && dirtyRes.stdout.trim() !== '';
+
+  const hasRemote = await run('git', ['-C', app.dir, 'rev-parse', '--verify', '--quiet', remoteRef]);
+  if (hasRemote.ok) {
+    const mirrorLog = await run('git', ['-C', app.dir, 'log', '-1', '--format=%h%x00%s%x00%cI', remoteRef]);
+    if (mirrorLog.ok) {
+      const parts = mirrorLog.stdout.trim().split('\x00');
+      out.mirror = { short: parts[0] || '?', subject: parts[1] || '', date: parts[2] || '' };
+    }
+    const behind = await run('git', ['-C', app.dir, 'rev-list', '--count', 'HEAD..' + remoteRef]);
+    if (behind.ok) out.behind = Number(behind.stdout.trim()) || 0;
+    const ahead = await run('git', ['-C', app.dir, 'rev-list', '--count', remoteRef + '..HEAD']);
+    if (ahead.ok) out.ahead = Number(ahead.stdout.trim()) || 0;
+    if (out.behind > 0) {
+      const pend = await run('git', ['-C', app.dir, 'log', '--oneline', '-5', 'HEAD..' + remoteRef]);
+      if (pend.ok) out.pending = pend.stdout.trim().split('\n').filter((l) => l.trim());
+    }
+  } else if (out.fetched) {
+    out.error = '镜像里还没有分支 ' + branch;
+  }
+
+  return out;
+}
+
+/** 门户自己也要显示在版本列表里，它不在 config.apps 中。 */
+function versionTargets() {
+  const cfg = readConfig();
+  const list = [];
+  if (cfg.self && cfg.self.dir) list.push(Object.assign({ name: '香橙派门户' }, cfg.self));
+  (cfg.apps || []).forEach((app) => {
+    if (app.dir) list.push(app);
+  });
+  return list;
+}
+
+/**
+ * 采集全部应用的版本信息（带 10 秒缓存）。
+ * @param {boolean} [force] 忽略缓存
+ * @returns {Promise<object[]>} 版本信息列表
+ */
+async function collectVersions(force) {
+  const now = Date.now();
+  if (!force && versionsCache.value && now - versionsCache.at < VERSIONS_TTL_MS) {
+    return versionsCache.value;
+  }
+  const list = await Promise.all(versionTargets().map((app) => probeVersion(app)));
+  versionsCache = { at: now, value: list };
+  return list;
+}
+
+/**
+ * 读升级口令。文件不存在就返回 null —— 此时升级功能整体不可用，
+ * 而不是「没有口令就放行」。
+ * @returns {string|null} 口令
+ */
+function readUpgradeToken() {
+  try {
+    const s = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+    return s || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * 恒定时间比较口令，避免用响应时间猜口令。
+ * @param {string} given 用户提交的口令
+ * @returns {boolean} 是否正确
+ */
+function tokenMatches(given) {
+  const real = readUpgradeToken();
+  if (!real || typeof given !== 'string' || !given) return false;
+  const a = Buffer.from(given, 'utf8');
+  const b = Buffer.from(real, 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * 重启某个 unit。门户自己不能直接重启自己（会被自己的 cgroup 杀掉），
+ * 所以交给 systemd-run 起一个独立的一次性单元，延迟 3 秒执行。
+ * @param {string} unit unit 名
+ * @returns {Promise<{ok:boolean, output:string}>} 结果
+ */
+async function restartUnit(unit) {
+  if (unit === 'portal.service') {
+    const res = await run('sudo', ['-n', '/usr/bin/systemd-run',
+      '--on-active=3', '--unit=portal-self-restart', '--collect',
+      '/usr/bin/systemctl', 'restart', unit], 8000);
+    return { ok: res.ok, output: lastLine(res.stderr) || res.error || '' };
+  }
+  const res = await run('sudo', ['-n', '/usr/bin/systemctl', 'restart', unit], 25000);
+  return { ok: res.ok, output: lastLine(res.stderr) || res.error || '' };
+}
+
+/**
+ * 读并解析 JSON 请求体。限 64KB，够用且防滥用。
+ * @param {http.IncomingMessage} req 请求
+ * @returns {Promise<object|null>} 解析结果，失败为 null
+ */
+function readJsonBody(req) {
+  return new Promise((resolve) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > 64 * 1024) {
+        resolve(null);
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      } catch (err) {
+        resolve(null);
+      }
+    });
+    req.on('error', () => resolve(null));
+  });
+}
+
+/**
+ * 执行一次升级：校验 → ff 合并 → 重启服务。
+ * @param {object} body {id, token}
+ * @returns {Promise<{status:number, body:object}>} HTTP 状态与响应体
+ */
+async function doUpgrade(body) {
+  if (!readUpgradeToken()) {
+    return { status: 503, body: { ok: false, error: '还没设置升级口令（' + TOKEN_FILE + '），功能未启用' } };
+  }
+  if (!tokenMatches(body && body.token)) {
+    return { status: 401, body: { ok: false, error: '口令不对' } };
+  }
+
+  const target = versionTargets().filter((a) => a.id === (body && body.id))[0];
+  if (!target) return { status: 404, body: { ok: false, error: '没有这个应用' } };
+  if (!target.unit) return { status: 400, body: { ok: false, error: '这个应用没有配置 systemd 服务名' } };
+
+  // 重新探一次，别信缓存：用户点升级前可能刚有人 push
+  const st = await probeVersion(target);
+  if (!st.managed) return { status: 400, body: { ok: false, error: st.error || '未纳入版本管理' } };
+  if (!st.fetched) return { status: 502, body: { ok: false, error: st.error || '拉取镜像失败' } };
+  if (st.dirty) {
+    return { status: 409, body: { ok: false, error: '这个项目有未提交改动，先处理再升级（git status 看看）' } };
+  }
+  if (st.ahead > 0) {
+    return { status: 409, body: { ok: false, error: '本地有 ' + st.ahead + ' 个没推送的提交，先推上去再升级' } };
+  }
+  if (!st.behind) {
+    return { status: 200, body: { ok: true, already: true, id: st.id, message: '已经是最新版本', version: st.current } };
+  }
+
+  const before = st.current;
+  const merge = await run('git', ['-C', target.dir, 'merge', '--ff-only', st.remoteRef], 30000);
+  if (!merge.ok) {
+    return { status: 500, body: { ok: false, error: '合并失败：' + (lastLine(merge.stderr) || merge.error) } };
+  }
+
+  const after = await run('git', ['-C', target.dir, 'log', '-1', '--format=%h%x00%s%x00%cI']);
+  const parts = after.stdout.trim().split('\x00');
+  versionsCache = { at: 0, value: null };
+
+  const restarted = await restartUnit(target.unit);
+  return {
+    status: target.unit === 'portal.service' ? 202 : 200,
+    body: {
+      ok: true,
+      id: st.id,
+      name: st.name,
+      from: before,
+      to: { short: parts[0] || '?', subject: parts[1] || '', date: parts[2] || '' },
+      applied: st.behind,
+      restarted: restarted.ok,
+      restartHint: restarted.ok ? null : ('代码已更新，但服务重启失败：' + restarted.output + '。请手动 sudo systemctl restart ' + target.unit),
+      message: target.unit === 'portal.service'
+        ? '已更新，门户将在 3 秒后重启'
+        : '已更新并重启 ' + target.unit
+    }
+  };
 }
 
 /* ------------------------------------------------------------------ *

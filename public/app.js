@@ -18,6 +18,10 @@
   var TIMEOUT_MS = 5000;
   /** 备份超过这么多小时就变黄（说明每天 03:00 的定时任务可能断了）。 */
   var BACKUP_WARN_HOURS = 30;
+  /** 版本信息的轮询间隔：比状态慢，因为每次都要跑一串 git 命令。 */
+  var VER_POLL_MS = 20000;
+  /** 升级口令在 localStorage 里的键。 */
+  var TOKEN_KEY = 'portal.upgrade.token';
 
   /** 卡片节点缓存：id → { badge, lat, sub }，轮询时只改状态，不重建 DOM。 */
   var appNodes = {};
@@ -27,6 +31,8 @@
   var busy = false;
   /** 上一次是否处于失败态，用来避免反复触发同一条提示。 */
   var offlineShown = false;
+  /** 服务端有没有配置升级口令；没有就不显示升级按钮 */
+  var hasUpgradeToken = false;
 
   /**
    * 取元素。
@@ -597,6 +603,306 @@
     });
   }
 
+  /* ---------- 版本与升级 ---------- */
+
+  /**
+   * 口令存在 localStorage：输一次就记住，不用每次升级都手打。
+   * 隐私模式下 localStorage 可能直接抛异常，所以全部包 try。
+   * @returns {string} 已存的口令，没有则空串
+   */
+  function readStoredToken() {
+    try {
+      return localStorage.getItem(TOKEN_KEY) || '';
+    } catch (err) {
+      return '';
+    }
+  }
+
+  /**
+   * 写入或清除口令。存不进去也不影响功能，只是下次要重新输。
+   * @param {string} v 口令，空串表示清除
+   * @returns {void}
+   */
+  function writeStoredToken(v) {
+    try {
+      if (v) localStorage.setItem(TOKEN_KEY, v);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch (err) {
+      // 忽略：隐私模式下就是存不了
+    }
+  }
+
+  /**
+   * POST JSON。和 getJSON 的区别是要把 HTTP 状态码带出来，
+   * 因为 401（口令错）/ 409（工作区脏）/ 503（没配口令）要分别提示。
+   * @param {string} url 地址
+   * @param {object} body 请求体
+   * @returns {Promise<object>} 响应 JSON，附加 status 字段
+   */
+  function postJSON(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      cache: 'no-store',
+      credentials: 'same-origin'
+    }).then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (data) {
+        data.status = resp.status;
+        return data;
+      });
+    });
+  }
+
+  /**
+   * 把版本状态翻译成一句人话 + 一个样式类。
+   * 顺序很重要：先报「不能升」的原因，再报「有新版」。
+   * @param {object} v 版本信息
+   * @returns {{cls:string, text:string}} 样式类与文案
+   */
+  function verState(v) {
+    if (!v.managed) return { cls: 'is-na', text: '未纳入版本管理' };
+    if (v.dirty) return { cls: 'is-warn', text: '有未提交改动' };
+    if (v.ahead > 0) return { cls: 'is-warn', text: '有 ' + v.ahead + ' 个未推送提交' };
+    if (v.behind > 0) return { cls: 'is-new', text: '落后 ' + v.behind + ' 个提交' };
+    if (v.error) return { cls: 'is-warn', text: v.error };
+    return { cls: 'is-ok', text: '已是最新' };
+  }
+
+  /**
+   * 显示一行提示。
+   * @param {HTMLElement} node 目标节点
+   * @param {string} text 文案
+   * @param {string} cls 附加样式类
+   * @returns {void}
+   */
+  function showMsg(node, text, cls) {
+    if (!node) return;
+    node.textContent = text || '';
+    node.hidden = !text;
+    node.className = 'ver-msg' + (cls ? ' ' + cls : '');
+  }
+
+  /**
+   * 造一行版本信息。
+   * @param {object} v 版本信息
+   * @returns {HTMLElement} 行元素
+   */
+  function buildVerRow(v) {
+    var row = document.createElement('article');
+    row.className = 'ver';
+    row.setAttribute('data-id', v.id);
+
+    var head = document.createElement('div');
+    head.className = 'ver-head';
+    var name = document.createElement('span');
+    name.className = 'ver-name';
+    name.textContent = v.name || v.id;
+    var st = verState(v);
+    var state = document.createElement('span');
+    state.className = 'ver-state ' + st.cls;
+    state.textContent = st.text;
+    head.appendChild(name);
+    head.appendChild(state);
+
+    var line = document.createElement('div');
+    line.className = 'ver-line';
+    var hash = document.createElement('code');
+    hash.className = 'ver-hash';
+    hash.textContent = v.current ? v.current.short : '—';
+    var subj = document.createElement('span');
+    subj.className = 'ver-subj';
+    subj.textContent = v.current ? (v.current.subject || '') : (v.error || '');
+    subj.title = subj.textContent;
+    line.appendChild(hash);
+    line.appendChild(subj);
+
+    row.appendChild(head);
+    row.appendChild(line);
+
+    // 落后时把待升级的提交列出来，让人看清点下去会拉到什么
+    if (v.behind > 0 && v.pending && v.pending.length) {
+      var ul = document.createElement('ul');
+      ul.className = 'ver-pending';
+      v.pending.forEach(function (l) {
+        var li = document.createElement('li');
+        li.textContent = l;
+        ul.appendChild(li);
+      });
+      row.appendChild(ul);
+    }
+
+    var msg = document.createElement('p');
+    msg.className = 'ver-msg';
+    msg.hidden = true;
+
+    // 只有「真有新版 + 服务端配了口令」才给按钮，避免摆一个必然失败的按钮
+    if (v.behind > 0 && hasUpgradeToken) {
+      var actions = document.createElement('div');
+      actions.className = 'ver-actions';
+
+      var input = null;
+      if (!readStoredToken()) {
+        input = document.createElement('input');
+        input.type = 'password';
+        input.className = 'ver-token';
+        input.placeholder = '升级口令';
+        input.setAttribute('autocomplete', 'current-password');
+        actions.appendChild(input);
+      }
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ver-btn';
+      btn.textContent = '升级';
+      btn.addEventListener('click', function () {
+        startUpgrade(v, btn, input, msg);
+      });
+      actions.appendChild(btn);
+      row.appendChild(actions);
+    }
+
+    row.appendChild(msg);
+    return row;
+  }
+
+  /**
+   * 渲染整块版本列表。
+   * @param {object} d /api/versions 的响应
+   * @returns {void}
+   */
+  function renderVersions(d) {
+    var box = $('versions');
+    if (!box) return;
+    var list = (d && d.list) || [];
+    hasUpgradeToken = !!(d && d.hasToken);
+
+    var empty = $('versions-empty');
+    if (empty) empty.hidden = list.length > 0;
+
+    box.innerHTML = '';
+    list.forEach(function (v) {
+      box.appendChild(buildVerRow(v));
+    });
+
+    var note = $('versions-note');
+    if (note) {
+      if (!list.length) {
+        note.hidden = true;
+      } else if (!hasUpgradeToken) {
+        note.textContent = '服务端还没设置升级口令，所以升级按钮不显示。' +
+          '在板子上跑一次 deploy/set-token.sh 就能开启。';
+        note.hidden = false;
+      } else {
+        note.hidden = true;
+      }
+    }
+  }
+
+  /**
+   * 拉一次版本信息。
+   * @returns {Promise<void>} 无
+   */
+  function refreshVersions() {
+    return getJSON('/api/versions').then(function (d) {
+      renderVersions(d);
+    }).catch(function () {
+      var note = $('versions-note');
+      if (note) {
+        note.textContent = '版本信息暂时取不到';
+        note.hidden = false;
+      }
+    });
+  }
+
+  /**
+   * 升级完成后的等待：轮询到新版本出现为止。
+   * 门户升级自己时页面会短暂连不上，所以失败要忽略、继续等。
+   * @param {object} v 被升级的应用
+   * @param {string} target 目标提交短哈希
+   * @param {HTMLElement} msg 提示节点
+   * @param {HTMLElement} btn 按钮
+   * @returns {void}
+   */
+  function waitForNewVersion(v, target, msg, btn) {
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      if (tries > 15) {
+        clearInterval(timer);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '升级';
+        }
+        showMsg(msg, '已提交，但 30 秒内没等到新版本生效，刷新页面看看', 'is-warn');
+        return;
+      }
+      getJSON('/api/versions').then(function (d) {
+        var hit = (d.list || []).filter(function (x) { return x.id === v.id; })[0];
+        if (hit && hit.current && hit.current.short === target) {
+          clearInterval(timer);
+          if (v.id === 'portal') {
+            // 门户自己换了代码，必须重载才能用上新前端
+            showMsg(msg, '门户已升级，正在重新加载页面…', 'is-ok');
+            setTimeout(function () { location.reload(); }, 1500);
+          } else {
+            renderVersions(d);
+          }
+        }
+      }).catch(function () {
+        // 门户重启期间请求会失败，继续等下一轮
+      });
+    }, 2000);
+  }
+
+  /**
+   * 点「升级」之后的全流程。
+   * @param {object} v 被升级的应用
+   * @param {HTMLButtonElement} btn 按钮
+   * @param {HTMLInputElement|null} input 口令输入框（已存口令时为 null）
+   * @param {HTMLElement} msg 提示节点
+   * @returns {void}
+   */
+  function startUpgrade(v, btn, input, msg) {
+    var token = readStoredToken() || (input ? input.value.trim() : '');
+    if (!token) {
+      if (input) input.focus();
+      showMsg(msg, '先输入升级口令', 'is-warn');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '升级中…';
+    showMsg(msg, '正在拉取并合并代码…', '');
+
+    postJSON('/api/upgrade', { id: v.id, token: token }).then(function (d) {
+      if (d.status === 401) {
+        writeStoredToken('');
+        hasUpgradeToken = true;
+        btn.disabled = false;
+        btn.textContent = '升级';
+        showMsg(msg, '口令不对', 'is-warn');
+        return;
+      }
+      if (!d.ok) {
+        btn.disabled = false;
+        btn.textContent = '升级';
+        showMsg(msg, d.error || '升级失败', 'is-warn');
+        return;
+      }
+      writeStoredToken(token);
+      var from = (d.from && d.from.short) || '?';
+      var to = (d.to && d.to.short) || '新版本';
+      showMsg(msg, d.message + '（' + from + ' → ' + to + '）', 'is-ok');
+      if (d.restartHint) showMsg(msg, d.restartHint, 'is-warn');
+      waitForNewVersion(v, to, msg, btn);
+    }).catch(function () {
+      btn.disabled = false;
+      btn.textContent = '升级';
+      showMsg(msg, '请求失败：服务可能正在重启，刷新页面看看', 'is-warn');
+    });
+  }
+
   /**
    * 启动：先拿应用清单渲染卡片，再开始轮询状态。
    * @returns {void}
@@ -618,12 +924,20 @@
       }
     }).then(function () {
       refresh();
+      refreshVersions();
       setInterval(function () {
         if (document.hidden) return;      // 页面在后台就不打扰板子
         refresh();
       }, POLL_MS);
+      setInterval(function () {
+        if (document.hidden) return;
+        refreshVersions();
+      }, VER_POLL_MS);
       document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) refresh();  // 回到前台立刻刷一次，不等下一轮
+        if (!document.hidden) {           // 回到前台立刻刷一次，不等下一轮
+          refresh();
+          refreshVersions();
+        }
       });
     });
   }

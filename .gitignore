@@ -2,3 +2,11 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# 升级口令：这是唯一能触发部署的凭据，绝不能进版本库
+.upgrade-token
+
+# 编辑器
+.vscode/
+.idea/
+.workbuddy/

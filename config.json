@@ -4,20 +4,36 @@
     "label": "家庭收纳备份",
     "dir": "/home/HwHiAiUser/Yangfan_WorkSpace/HomeBox/data/backup"
   },
+  "self": {
+    "id": "portal",
+    "name": "香橙派门户",
+    "dir": "/home/HwHiAiUser/Yangfan_WorkSpace/portal",
+    "unit": "portal.service",
+    "branch": "main",
+    "mirror": "mirror"
+  },
   "apps": [
     {
       "id": "homebox",
       "name": "家庭收纳",
       "desc": "找东西、记一件、衣柜推荐",
       "port": 8888,
-      "accent": "#B4633A"
+      "accent": "#B4633A",
+      "dir": "/home/HwHiAiUser/Yangfan_WorkSpace/HomeBox",
+      "unit": "homebox.service",
+      "branch": "main",
+      "mirror": "mirror"
     },
     {
       "id": "photo-frame",
       "name": "电子相框",
       "desc": "照片自动播放，挂在墙上的那种",
       "port": 9999,
-      "accent": "#6B7F5E"
+      "accent": "#6B7F5E",
+      "dir": "/home/HwHiAiUser/Yangfan_WorkSpace/photo-frame",
+      "unit": "photo-frame.service",
+      "branch": "main",
+      "mirror": "mirror"
     }
   ]
 }
