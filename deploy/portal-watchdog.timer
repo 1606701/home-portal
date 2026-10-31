@@ -1,0 +1,11 @@
+[Unit]
+Description=Run portal watchdog every 2 minutes
+
+[Timer]
+# 开机 1 分钟后先跑一次，之后每 2 分钟一次
+OnBootSec=60
+OnUnitActiveSec=120
+AccuracySec=10
+
+[Install]
+WantedBy=timers.target

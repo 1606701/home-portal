@@ -95,6 +95,49 @@ journalctl -u portal -n 50 --no-pager
 放在启动时做掉，第一个 `/api/stats` 就不用替启动过程付账。
 NPU / 失败服务那几项由采样器在启动时立刻跑一轮，所以这里已经能看到结果。
 
+### 更新代码
+
+板子上的 `~/Yangfan_WorkSpace/portal` 是一个 git 检出，以后更新只要：
+
+```bash
+cd ~/Yangfan_WorkSpace/portal
+git pull --ff-only
+sudo systemctl restart portal
+```
+
+只改 `config.json` 的应用清单**不需要重启**（每次请求现读）；改了 `server.js` 或 `public/` 下任何文件必须重启。
+
+### 看门狗（为什么必须有）
+
+门户挂在 80 端口，是整台板子的入口。它一旦停下，你既找不到应用入口、也看不到系统状态，
+而且不会有任何提示。`Restart=always` 只管「进程崩了」——**手动 stop 或被判 failed 之后，
+systemd 不会自己拉起**，必须有人再 `start` 一次。
+
+`deploy/portal-watchdog.{sh,service,timer}` 每 2 分钟检查一次：
+
+- 服务没在跑 → `start`
+- 服务在跑但 HTTP 无响应 → 隔 3 秒重试一次，仍不通才 `restart`（避免瞬时抖动误重启）
+- 一切正常 → 静默退出，不刷日志
+
+安装：
+
+```bash
+sudo install -m 755 deploy/portal-watchdog.sh      /usr/local/bin/portal-watchdog.sh
+sudo install -m 644 deploy/portal-watchdog.service /etc/systemd/system/
+sudo install -m 644 deploy/portal-watchdog.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now portal-watchdog.timer
+```
+
+验证它真的会救：
+
+```bash
+sudo systemctl stop portal              # 故意弄挂
+sudo systemctl start portal-watchdog    # 手动触发一次，不用等满 2 分钟
+systemctl is-active portal              # 应该是 active
+journalctl -t portal-watchdog -n 5      # 应能看到「检测到 portal.service 未运行」
+```
+
 ## 二、加/改应用
 
 只改 `config.json`，**不用重启**（每次请求都现读，读坏了继续用上一份好的）：

@@ -1,0 +1,10 @@
+[Unit]
+Description=Portal watchdog (one-shot self-heal check)
+Documentation=https://github.com/1606701/home-portal
+After=portal.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/portal-watchdog.sh
+# 看门狗自己出问题不应该拖累系统，也不应该反复重启
+Nice=10
