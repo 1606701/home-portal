@@ -254,6 +254,34 @@ bash deploy/set-token.sh --show    # 查看当前口令
    不给 `NOPASSWD: ALL`。门户是个没有登录的局域网页面，靠一个口令守着升级入口，
    真出事也只波及这三个服务。
 
+### 免密规则为什么写在 /etc/sudoers 末尾，而不是 /etc/sudoers.d/
+
+这是踩出来的坑，值一条：这块板子的 `/etc/sudoers` 长这样：
+
+```
+54: @includedir /etc/sudoers.d
+55: HwHiAiUser ALL=(ALL) ALL      ← 厂商加的，在 include 之后
+```
+
+sudo 的规则是**最后匹配的那条生效**。所以放 `/etc/sudoers.d/portal-upgrade` 里的
+`NOPASSWD` 会被第 55 行那条 `ALL` 覆盖，表现为：
+
+```
+$ sudo -n /usr/bin/systemctl restart homebox.service
+sudo: a password is required
+```
+
+而且 `sudo -l` 会给出**假阳性**——它只回答「有没有权限」，不回答「最后匹配的是哪条」，
+所以 `sudo -l /usr/bin/systemctl restart homebox.service` 返回 0 但实际执行照样要密码。
+`deploy/set-token.sh` 因此把规则追加到 `/etc/sudoers` **最末尾**（用
+`# >>> portal-upgrade >>>` 标记块，可重复执行），并且不再假装验证免密是否真生效。
+
+要自己确认，就跑一次真的：
+
+```bash
+sudo -n /usr/bin/systemctl restart homebox.service && echo 免密可用
+```
+
 ### 升级出问题怎么查
 
 ```bash

@@ -1,14 +1,14 @@
-# 门户「一键升级」需要的权限。
+# >>> portal-upgrade >>>
+# 门户「一键升级」需要的权限。这一段由 deploy/set-token.sh 自动维护，请勿手改。
 #
-# 为什么不用 NOPASSWD: ALL：门户是个没有登录的局域网页面，
-# 只靠一个口令守着升级入口。给它万能 sudo 等于把整台板子交出去。
-# 这里只放行三条具体命令，参数写死，多一个字都不行：
-#   · 重启 homebox / photo-frame 两个服务
-#   · 用 systemd-run 起一个独立的一次性单元来重启门户自己
-#     （门户不能直接重启自己，会被自己所在 cgroup 的 KillMode 连带杀掉）
+# 为什么不用 NOPASSWD: ALL：门户是个没有登录的局域网页面，只靠一个口令守着升级入口，
+# 给它万能 sudo 等于把整台板子交出去。这里只放行三条具体命令，参数写死。
 #
-# 安装：sudo install -m 440 -o root -g root deploy/portal-upgrade.sudoers /etc/sudoers.d/portal-upgrade
-# 校验：sudo visudo -c
+# 为什么写在 /etc/sudoers 末尾而不是 /etc/sudoers.d/：
+# 这块板子的 /etc/sudoers 里 @includedir 在前、`HwHiAiUser ALL=(ALL) ALL` 在后，
+# sudo 是「最后匹配的规则生效」，放在 sudoers.d 里的 NOPASSWD 会被那条 ALL 覆盖，
+# 实测表现为 `sudo -n` 报 "a password is required"。所以必须追加到文件最末尾。
 HwHiAiUser ALL=(root) NOPASSWD: /usr/bin/systemctl restart homebox.service
 HwHiAiUser ALL=(root) NOPASSWD: /usr/bin/systemctl restart photo-frame.service
 HwHiAiUser ALL=(root) NOPASSWD: /usr/bin/systemd-run --on-active=3 --unit=portal-self-restart --collect /usr/bin/systemctl restart portal.service
+# <<< portal-upgrade <<<
